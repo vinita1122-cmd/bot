@@ -1209,7 +1209,13 @@ async def on_message(message):
         else:
             try:
                 owner = await client.fetch_user(ADMIN_IDS[0])
-                await owner.send(f"🕵️ **Intercepted DM from {message.author.mention} ({message.author.name}):**\n{message.content}")
+                # Додав ID, щоб тобі було зручно копіювати для команди !pmsg
+                await owner.send(f"💬 **Нове повідомлення в ПП від {message.author.display_name} (`{message.author.name}`)**\n🆔 ID: `{message.author.id}`\n\n{message.content}")
+                
+                # Якщо користувач надіслав файли/картинки, бот перешле їх тобі
+                if message.attachments:
+                    files_to_forward = [await att.to_file() for att in message.attachments]
+                    await owner.send(files=files_to_forward)
             except Exception as e:
                 print(f"DM Intercept Error: {e}")
 
@@ -2199,6 +2205,46 @@ async def on_message(message):
             await message.channel.send("❌ **Message not found.** (Check ID or bot permissions)")
         return
     # -------------------------------------------------------------
+
+	# --- ✉️ КОМАНДА: !pmsg <User_ID> <текст> (НАПИСАТИ В ПП КОРИСТУВАЧУ) ---
+    if message.content.startswith("!pmsg"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split(" ", 2)
+        if len(parts) < 2 and not message.attachments:
+            return await message.channel.send("⚠️ **Format:** `!pmsg <User_ID> <text>` (можна прикріплювати картинки)")
+            
+        target_id_str = parts[1]
+        if not target_id_str.isdigit():
+             return await message.channel.send("⚠️ **Error:** User ID має бути числом.")
+             
+        target_user_id = int(target_id_str)
+        text_to_send = parts[2] if len(parts) > 2 else ""
+        
+        files_to_send = []
+        for attachment in message.attachments:
+            files_to_send.append(await attachment.to_file())
+            
+        if not text_to_send and not files_to_send:
+            return await message.channel.send("⚠️ **Error:** Немає тексту або зображення для відправки.")
+            
+        try:
+            # Шукаємо користувача
+            target_user = await client.fetch_user(target_user_id)
+            if not target_user:
+                return await message.channel.send("❌ **Error:** Користувача з таким ID не знайдено.")
+                
+            # Відправляємо повідомлення
+            await target_user.send(content=text_to_send, files=files_to_send)
+            await message.add_reaction("✅")
+            await message.channel.send(f"✅ **Повідомлення успішно доставлено в ПП користувачу {target_user.display_name}.**")
+            
+        except discord.Forbidden:
+            await message.channel.send(f"❌ **Error:** Неможливо надіслати повідомлення {target_user_id}. Можливо, у нього закриті ПП для не-друзів, або він заблокував бота.")
+        except Exception as e:
+            await message.channel.send(f"❌ **Error:** {e}")
+        return
+    # -------------------------------------------------------------------------
 
    # --- ✉️ КОМАНДА: !msg <ID_каналу> <текст> (+ МОЖНА ПРИКРІПЛЯТИ КАРТИНКИ) ---
     if message.content.startswith("!msg"):
