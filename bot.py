@@ -2246,6 +2246,78 @@ async def on_message(message):
         return
     # -------------------------------------------------------------------------
 
+	# --- 📥 КОМАНДА: !getdms [кількість] (ВИТЯГНУТИ ІСТОРІЮ ПП) ---
+    if message.content.startswith("!getdms"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        status_msg = await message.channel.send("⏳ **Збираю історію особистих повідомлень... Це може зайняти хвилину.**")
+        
+        parts = message.content.split()
+        # За замовчуванням беремо останні 100 повідомлень з кожного чату. Можна вказати інше число.
+        limit_per_user = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 100
+        
+        all_dms = "=== ІСТОРІЯ ОСОБИСТИХ ПОВІДОМЛЕНЬ БОТА ===\n"
+        all_dms += f"Згенеровано: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        all_dms += f"Ліміт: {limit_per_user} повідомлень на користувача\n\n"
+        
+        user_count = 0
+        msg_count = 0
+        
+        for pm_channel in client.private_channels:
+            # pm_channel.recipient - це користувач, з яким ведеться переписка
+            # Пропускаємо ПП, якщо це адмін
+            if not pm_channel.recipient or pm_channel.recipient.id in ADMIN_IDS:
+                continue
+                
+            user_count += 1
+            all_dms += f"{'='*50}\n"
+            all_dms += f"👤 Переписка з: {pm_channel.recipient.display_name} ({pm_channel.recipient.name})\n"
+            all_dms += f"🆔 ID: {pm_channel.recipient.id}\n"
+            all_dms += f"{'='*50}\n"
+            
+            try:
+                # Збираємо повідомлення
+                messages = [m async for m in pm_channel.history(limit=limit_per_user)]
+                messages.reverse() # Перевертаємо, щоб читалося хронологічно (зверху вниз)
+                
+                if not messages:
+                    all_dms += "(Порожньо)\n\n"
+                    continue
+                    
+                for m in messages:
+                    time_str = m.created_at.strftime("%Y-%m-%d %H:%M")
+                    # Якщо автор повідомлення - бот, пишемо "BOT", інакше нікнейм юзера
+                    sender = "🤖 БОТ" if m.author == client.user else f"🗣️ {m.author.name}"
+                    
+                    all_dms += f"[{time_str}] {sender}: {m.clean_content}\n"
+                    
+                    # Якщо є картинки/файли, робимо позначку
+                    if m.attachments:
+                        urls = ", ".join([att.url for att in m.attachments])
+                        all_dms += f"[{time_str}] {sender}: [Прикріплені файли: {urls}]\n"
+                        
+                    msg_count += 1
+                all_dms += "\n"
+                    
+            except discord.Forbidden:
+                all_dms += "❌ Немає доступу до історії цього чату.\n\n"
+            except Exception as e:
+                all_dms += f"❌ Помилка читання: {e}\n\n"
+                
+        if msg_count == 0:
+            await status_msg.delete()
+            return await message.channel.send("✅ **У кеші бота наразі немає жодних переписок з пілотами.**\n*(Пам'ятай: бот бачить лише ті ПП, які були активні після його останнього перезапуску).*")
+            
+        # Створюємо віртуальний файл і надсилаємо
+        file_bin = io.BytesIO(all_dms.encode('utf-8'))
+        await message.channel.send(
+            content=f"✅ **Збір завершено!**\nЗнайдено **{msg_count}** повідомлень у переписках з **{user_count}** користувачами.", 
+            file=discord.File(file_bin, filename="bot_dms_history.txt")
+        )
+        await status_msg.delete()
+        return
+    # -------------------------------------------------------------
+
    # --- ✉️ КОМАНДА: !msg <ID_каналу> <текст> (+ МОЖНА ПРИКРІПЛЯТИ КАРТИНКИ) ---
     if message.content.startswith("!msg"):
         if not is_admin: return await message.channel.send("🚫 **Access Denied**")
