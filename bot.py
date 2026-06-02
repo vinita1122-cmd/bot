@@ -1059,6 +1059,19 @@ async def on_interaction(interaction):
                 
                 cargo_rev = int(f.get("result", {}).get("revenue", {}).get("cargo", 0))
                 
+                # --- ДЕТАЛІ ВАНТАЖУ ДЛЯ ПАСАЖИРСЬКОГО РЕЙСУ ---
+                cargo_cap = int(f.get("payload", {}).get("cargoCapacity", 0))
+                cargo_actual = int(t.get("payload", {}).get("cargo", 0))
+                if cargo_actual == 0: cargo_actual = int(f.get("payload", {}).get("cargo", 0))
+                cargo_load_factor = round((cargo_actual / cargo_cap) * 100, 1) if cargo_cap > 0 else 0.0
+                cargo_unit_price = int(t.get("prices", {}).get("cargoUnitPrice", 0))
+                
+                # Формуємо рядок тільки якщо літак може брати вантаж І вантаж дійсно є
+                if is_uk:
+                    cargo_ext_str = f"╰ Завантаженість об'єму: {cargo_actual} / {cargo_cap} одиниць ({cargo_load_factor}%), (Тариф: {cargo_unit_price} $ / од.)\n" if cargo_cap > 0 and cargo_actual > 0 else ""
+                else:
+                    cargo_ext_str = f"╰ Volume Load: {cargo_actual} / {cargo_cap} units ({cargo_load_factor}%), (Rate: {cargo_unit_price} $ / unit)\n" if cargo_cap > 0 and cargo_actual > 0 else ""
+                
                 # --- АЛОКАЦІЯ ПАЛИВА ЗА ВАГОЮ ---
                 fuel_kg = int(t.get("fuel", 0))
                 weights = f.get("payload", {}).get("weights", {})
@@ -1085,7 +1098,8 @@ async def on_interaction(interaction):
                         f"📉 **Економіка на 1 пасажира:**\n"
                         f"├ 💵 Дохід: {rev_per_pax} $ | 🧾 Витрати: {exp_per_pax} $\n"
                         f"└ 💰 Чистий прибуток: {prof_per_pax} $\n\n"
-                        f"📦 **Комерційний вантаж:** {cargo_rev} $\n"
+                        f"📦 **Комерційний вантаж:** {cargo_rev:,} $\n".replace(",", " ") +
+                        cargo_ext_str +
                         f"🛢️ **Споживання палива:** {fuel_per_pax} кг на 1 пасажира"
                     )
                     embed = discord.Embed(title="🎫 СТАТИСТИКА ПАСАЖИРІВ ТА КОМЕРЦІЇ", description=desc, color=0x3498db)
@@ -1096,7 +1110,8 @@ async def on_interaction(interaction):
                         f"📉 **Economics per Passenger:**\n"
                         f"├ 💵 Revenue: {rev_per_pax} $ | 🧾 Expenses: {exp_per_pax} $\n"
                         f"└ 💰 Net Profit: {prof_per_pax} $\n\n"
-                        f"📦 **Commercial Cargo:** {cargo_rev} $\n"
+                        f"📦 **Commercial Cargo:** {cargo_rev:,} $\n".replace(",", " ") +
+                        cargo_ext_str +
                         f"🛢️ **Fuel Burn:** {fuel_per_pax} kg per passenger"
                     )
                     embed = discord.Embed(title="🎫 PASSENGER & COMMERCIAL STATS", description=desc, color=0x3498db)
