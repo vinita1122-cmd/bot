@@ -496,8 +496,10 @@ def format_airport_string(icao, api_name):
             "Vinnitsa": "Vinnytsia",
             "Zaporizhia": "Zaporizhzhia",
             "Larnarca": "Larnaca",
-			"Frankfurt-am-Main": "Frankfurt am Main",
-            "Sharm el-Sheikh": "Sharm El Sheikh"
+            "Frankfurt-am-Main": "Frankfurt am Main",
+            "Sharm el-Sheikh": "Sharm El Sheikh",
+            "Ajaccio/Napoléon Bonaparte": "Ajaccio",
+            "Ajaccio/Napoleon Bonaparte": "Ajaccio"
         }
         
         for old, new in CITY_FIXES.items():
