@@ -1907,18 +1907,30 @@ async def on_message(message):
         found_message = await find_discord_message(int(target_id), message)
         
         if found_message:
-            # 🔥 ДОДАТКОВО: Шукаємо емодзі, якщо передана тільки назва
             reaction_emoji = emoji_input
-            if ":" not in emoji_input and not emoji_input.startswith("<"):
-                found_emoji = discord.utils.get(message.guild.emojis, name=emoji_input)
-                if found_emoji:
-                    reaction_emoji = found_emoji
+            
+            # 🔥 Перевіряємо, чи це ПРОСТО НАЗВА (тільки букви, цифри та нижнє підкреслення)
+            if re.match(r"^[a-zA-Z0-9_]+$", emoji_input):
+                # Якщо команду написали на сервері — шукаємо на цьому ж сервері
+                if message.guild:
+                    found_emoji = discord.utils.get(message.guild.emojis, name=emoji_input)
+                    if found_emoji:
+                        reaction_emoji = found_emoji
+                    else:
+                        return await message.channel.send(f"❌ **Емодзі `{emoji_input}` не знайдено на цьому сервері!**")
                 else:
-                    return await message.channel.send(f"❌ **Емодзі `{emoji_input}` не знайдено на цьому сервері!**")
+                    # Якщо команду написали в ПП (тут немає бази кастомних емодзі)
+                    return await message.channel.send("❌ **Помилка:** В особистих повідомленнях не можна шукати кастомні емодзі за назвою. Відправ стандартний смайлик або його повний код `<:name:ID>`.")
 
             try:
                 await found_message.add_reaction(reaction_emoji)
-                await message.channel.send(f"✅ **Reacted {reaction_emoji} to message in {found_message.channel.mention}**")
+                channel_mention = found_message.channel.mention if hasattr(found_message.channel, 'mention') else "Direct Messages"
+                await message.channel.send(f"✅ **Reacted {reaction_emoji} to message in {channel_mention}**")
+            except discord.HTTPException as e:
+                if e.status == 400:
+                    await message.channel.send(f"❌ **Помилка:** Неправильний формат емодзі або бот не має до нього доступу.")
+                else:
+                    await message.channel.send(f"❌ **Error adding reaction:** {e}")
             except Exception as e:
                 await message.channel.send(f"❌ **Error adding reaction:** {e}")
         else:
