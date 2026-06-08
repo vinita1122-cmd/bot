@@ -1477,6 +1477,56 @@ async def on_message(message):
         return
     # -------------------------------------------------------------
 
+	# --- ✏️ КОМАНДА: !rename <Channel_ID> <нова назва> (ПЕРЕЙМЕНУВАТИ КАНАЛ) ---
+    if message.content.startswith("!rename"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split(" ", 2)
+        if len(parts) < 3:
+            return await message.channel.send("⚠️ **Format:** `!rename <Channel_ID> <нова_назва>`")
+            
+        target_id_str = parts[1]
+        if not target_id_str.isdigit():
+             return await message.channel.send("⚠️ **Error:** Channel ID має бути числом.")
+             
+        target_channel_id = int(target_id_str)
+        new_name = parts[2]
+        
+        # Визначаємо сервер (працюватиме навіть якщо ти пишеш команду в ПП)
+        main_channel = client.get_channel(CHANNEL_ID)
+        guild = message.guild if message.guild else (main_channel.guild if main_channel else None)
+        
+        if not guild:
+            return await message.channel.send("❌ **Error:** Не вдалося визначити сервер.")
+            
+        # Шукаємо канал
+        target_channel = guild.get_channel(target_channel_id)
+        if not target_channel:
+             try:
+                 target_channel = await guild.fetch_channel(target_channel_id)
+             except:
+                 return await message.channel.send("❌ **Error:** Канал з таким ID не знайдено.")
+                 
+        try:
+            old_name = target_channel.name
+            await target_channel.edit(name=new_name)
+            await message.add_reaction("✅")
+            await message.channel.send(f"✅ **Успіх!** Канал `{old_name}` перейменовано на `{new_name}`.")
+            
+        except discord.Forbidden:
+            await message.channel.send("❌ **Error:** У бота немає прав керувати цим каналом (потрібен дозвіл Manage Channels).")
+        except discord.HTTPException as e:
+            # Відловлюємо ліміти Discord (Rate Limit: 2 перейменування на 10 хвилин)
+            if e.status == 429:
+                await message.channel.send("⏳ **Discord Rate Limit:** Ти занадто часто перейменовував цей канал. Почекай 10 хвилин і спробуй ще раз.")
+            else:
+                await message.channel.send(f"❌ **HTTP Error:** {e}")
+        except Exception as e:
+            await message.channel.send(f"❌ **Error:** {e}")
+            
+        return
+    # -------------------------------------------------------------
+
 	# --- 🧪 КОМАНДА 1: !teststatspin (ЗІ ЗАКРІПЛЕННЯМ ТА ВІДКРІПЛЕННЯМ) ---
     if message.content == "!teststatspin":
         if not is_admin: return await message.channel.send("🚫 **Access Denied**")
