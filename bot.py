@@ -711,6 +711,19 @@ async def send_flight_message(channel, status, f, details_type="ongoing", reply_
     dep_str = format_airport_string(f.get("dep", {}).get("icao", ""), f.get("dep", {}).get("name", ""))
     arr_str = format_airport_string(f.get("arr", {}).get("icao", ""), f.get("arr", {}).get("name", ""))
     
+    # --- 🔀 ЛОГІКА DIVERSION (ЗМІНА АЕРОПОРТУ) ---
+    planned_arr_icao = f.get("arr", {}).get("icao", "").upper()
+    act_arr = f.get("actArr", {})
+    
+    if isinstance(act_arr, dict):
+        act_arr_icao = act_arr.get("icao", "").upper()
+        # Якщо фактичний ICAO є, і він відрізняється від запланованого
+        if act_arr_icao and act_arr_icao != planned_arr_icao and act_arr_icao != "???":
+            act_arr_str = format_airport_string(act_arr_icao, act_arr.get("name", ""))
+            # Закреслюємо старий аеропорт і додаємо фактичний
+            arr_str = f"~~{arr_str}~~ 🔀 {act_arr_str}"
+    # ---------------------------------------------
+    
     ac = f.get("aircraft", {}).get("airframe", {}).get("name", "A/C")
     pilot = f.get("pilot", {}).get("fullname", "Pilot")
     
