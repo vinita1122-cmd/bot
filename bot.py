@@ -721,7 +721,7 @@ async def send_flight_message(channel, status, f, details_type="ongoing", reply_
         if act_arr_icao and act_arr_icao != planned_arr_icao and act_arr_icao != "???":
             act_arr_str = format_airport_string(act_arr_icao, act_arr.get("name", ""))
             # Закреслюємо старий аеропорт і додаємо фактичний
-            arr_str = f"~~{arr_str}~~ 🔀 {act_arr_str}"
+            arr_str = f"~~{arr_str}~~ \u2003🔀\u2003 {act_arr_str}"
     # ---------------------------------------------
     
     ac = f.get("aircraft", {}).get("airframe", {}).get("name", "A/C")
