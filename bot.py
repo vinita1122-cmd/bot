@@ -879,6 +879,9 @@ async def send_flight_message(channel, status, f, details_type="ongoing", reply_
                 # 2. ПОТІМ кнопка палива (Червона - danger)
                 view.add_item(discord.ui.Button(style=discord.ButtonStyle.danger, label="⛽ Fuel Stats", custom_id=f"fuel_{fid}"))
                 
+                # 3. Кнопка розширеної статистики (Сіра - secondary)
+                view.add_item(discord.ui.Button(style=discord.ButtonStyle.secondary, label="📊 Advanced Stats", custom_id=f"adv_{fid}"))
+                
             # Розумна відправка (з кнопкою і реплаєм, якщо треба)
             kwargs = {"embed": embed}
             if status == "Completed": 
@@ -967,7 +970,7 @@ async def on_interaction(interaction):
         custom_id = interaction.data.get("custom_id", "")
         
         # Перевіряємо, чи це одна з наших кнопок статистики
-        if custom_id.startswith(("fuel_", "pax_", "cargo_")):
+        if custom_id.startswith(("fuel_", "pax_", "cargo_", "adv_")):
             # Визначаємо тип дії та витягуємо ID рейсу
             action_type = custom_id.split("_")[0]
             flight_id = custom_id.split("_")[1]
@@ -1171,6 +1174,102 @@ async def on_interaction(interaction):
                     )
                     embed = discord.Embed(title="📦 COMMERCIAL CARGO STATS", description=desc, color=0xe67e22)
 
+            # --- 📊 ЛОГІКА КНОПКИ ADVANCED STATS ---
+            elif action_type == "adv":
+                # Техніка
+                sim = str(f.get("simulator", "Unknown")).lower()
+                fps = "Невідомо" if is_uk else "Unknown"
+                
+                violations = f.get("result", {}).get("violations", [])
+                for v in violations:
+                    payload = v.get("entry", {}).get("payload", {})
+                    if "system" in payload and "fps" in payload["system"]:
+                        fps = payload["system"]["fps"]
+                        break
+                if fps in ["Невідомо", "Unknown"] and "landing" in f:
+                    if "system" in f["landing"] and "fps" in f["landing"]["system"]:
+                        fps = f["landing"]["system"]["fps"]
+                
+                # Витрати
+                ac_cost = int(exp.get("aircraft", 0))
+                fuel_cost = int(exp.get("fuel", 0))
+                hand_cost = int(exp.get("handling", 0))
+                land_cost = int(exp.get("landing", 0))
+                total_exp = int(t.get("expenses", 0))
+                
+                # Знижки
+                scalars = t.get("prices", {}).get("costScalars", {})
+                dep_sc = float(scalars.get("dep", 1.0))
+                arr_sc = float(scalars.get("arr", 1.0))
+                gnd_sc = float(scalars.get("ground", 1.0))
+                fuel_sc = float(scalars.get("fuel", 1.0))
+                
+                def fmt_sc(val, uk):
+                    if val >= 1.0: return "Без знижки" if uk else "No discount"
+                    diff = int(round((1.0 - val) * 100))
+                    return f"-{diff}% до зборів" if uk else f"-{diff}% to fees"
+                def fmt_sc_g(val, uk):
+                    if val >= 1.0: return "Без знижки" if uk else "No discount"
+                    diff = int(round((1.0 - val) * 100))
+                    return f"-{diff}%"
+                
+                # Штрафи
+                penalties_str = ""
+                for v in violations:
+                    points = float(v.get("penalty", {}).get("points", 0))
+                    cash = int(v.get("penalty", {}).get("cash", 0))
+                    if points < 0 or cash < 0:
+                        title = v.get("title", "Unknown violation").replace("<br/>", " ")
+                        rating_penalty = points / 100.0
+                        if is_uk:
+                            penalties_str += f"├ ⚠️ **{title}**\n└ ➖ Штраф: `{rating_penalty:.2f} рейтингу` | `-${abs(cash)}`\n"
+                        else:
+                            penalties_str += f"├ ⚠️ **{title}**\n└ ➖ Penalty: `{rating_penalty:.2f} rating` | `-${abs(cash)}`\n"
+                            
+                if not penalties_str:
+                    penalties_str = "└ ✅ Штрафів немає! Ідеальний політ." if is_uk else "└ ✅ No penalties! Perfect flight."
+                    
+                if is_uk:
+                    desc = (
+                        f"🖥️ **Технічна інформація:**\n"
+                        f"├ 🕹️ Симулятор: {sim}\n"
+                        f"└ 📈 FPS на посадці: {fps}\n\n"
+                        f"💸 **Деталізація витрат:**\n"
+                        f"├ ✈️ Літак: {ac_cost:,} $\n".replace(",", " ") +
+                        f"├ 🛢️ Паливо: {fuel_cost:,} $\n".replace(",", " ") +
+                        f"├ 🧳 Хендлінг: {hand_cost:,} $\n".replace(",", " ") +
+                        f"├ 🛬 Посадковий збір: {land_cost:,} $\n".replace(",", " ") +
+                        f"└ 🧾 Всього витрат: {total_exp:,} $\n\n".replace(",", " ") +
+                        f"🏷️ **Економічні коефіцієнти:**\n"
+                        f"├ 🛫 Виліт: {dep_sc} ({fmt_sc(dep_sc, True)})\n"
+                        f"├ 🛬 Приліт: {arr_sc} ({fmt_sc(arr_sc, True)})\n"
+                        f"├ 🚜 Наземне обслуговування: {gnd_sc} ({fmt_sc_g(gnd_sc, True)})\n"
+                        f"└ ⛽ Паливо: {fuel_sc} ({fmt_sc_g(fuel_sc, True)})\n\n"
+                        f"🚨 **Штрафи та Порушення:**\n"
+                        f"{penalties_str}"
+                    )
+                    embed = discord.Embed(title="📊 Розширена Статистика Рейсу", description=desc, color=0x95a5a6)
+                else:
+                    desc = (
+                        f"🖥️ **Technical Info:**\n"
+                        f"├ 🕹️ Simulator: {sim}\n"
+                        f"└ 📈 Landing FPS: {fps}\n\n"
+                        f"💸 **Detailed Expenses:**\n"
+                        f"├ ✈️ Aircraft: {ac_cost:,} $\n".replace(",", " ") +
+                        f"├ 🛢️ Fuel: {fuel_cost:,} $\n".replace(",", " ") +
+                        f"├ 🧳 Handling: {hand_cost:,} $\n".replace(",", " ") +
+                        f"├ 🛬 Landing: {land_cost:,} $\n".replace(",", " ") +
+                        f"└ 🧾 Total Expenses: {total_exp:,} $\n\n".replace(",", " ") +
+                        f"🏷️ **Economic Multipliers:**\n"
+                        f"├ 🛫 Departure: {dep_sc} ({fmt_sc(dep_sc, False)})\n"
+                        f"├ 🛬 Arrival: {arr_sc} ({fmt_sc(arr_sc, False)})\n"
+                        f"├ 🚜 Ground Handling: {gnd_sc} ({fmt_sc_g(gnd_sc, False)})\n"
+                        f"└ ⛽ Fuel: {fuel_sc} ({fmt_sc_g(fuel_sc, False)})\n\n"
+                        f"🚨 **Penalties & Violations:**\n"
+                        f"{penalties_str}"
+                    )
+                    embed = discord.Embed(title="📊 Advanced Flight Stats", description=desc, color=0x95a5a6)
+
             # 3. Відправляємо приховано
             sent_stats_msg = await interaction.followup.send(embed=embed, ephemeral=True)
             
@@ -1191,6 +1290,7 @@ async def on_interaction(interaction):
                     action_name = "Переглянув статистику палива"
                     if action_type == "pax": action_name = "Переглянув статистику пасажирів"
                     elif action_type == "cargo": action_name = "Переглянув статистику вантажу"
+                    elif action_type == "adv": action_name = "Переглянув розширену статистику"
                     
                     # Витягуємо посилання на повідомлення, під яким натиснули кнопку
                     msg_url = interaction.message.jump_url
