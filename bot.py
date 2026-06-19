@@ -1222,9 +1222,9 @@ async def on_interaction(interaction):
                         title = v.get("title", "Unknown violation").replace("<br/>", " ")
                         rating_penalty = points / 100.0
                         if is_uk:
-                            penalties_str += f"├ ⚠️ **{title}**\n└ ➖ Штраф: `{rating_penalty:.2f} рейтингу` | `-${abs(cash)}`\n"
+                            penalties_str += f"├**{title}**\n└ ➖ Штраф: `{rating_penalty:.2f} рейтингу` | `-${abs(cash)}`\n"
                         else:
-                            penalties_str += f"├ ⚠️ **{title}**\n└ ➖ Penalty: `{rating_penalty:.2f} rating` | `-${abs(cash)}`\n"
+                            penalties_str += f"├**{title}**\n└ ➖ Penalty: `{rating_penalty:.2f} rating` | `-${abs(cash)}`\n"
                             
                 if not penalties_str:
                     penalties_str = "└ ✅ Штрафів немає! Ідеальний політ." if is_uk else "└ ✅ No penalties! Perfect flight."
