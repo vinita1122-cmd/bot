@@ -1580,7 +1580,12 @@ async def on_message(message):
                 while True:
                     await status_msg.edit(content=f"⏳ **Пачка {skip_count // batch_size + 1}:** Завантажую {batch_size} рейсів (зміщення: {skip_count})...")
                     
-                    body = {"count": batch_size, "skip": skip_count}
+                    # Додаємо параметр start глибоко з минулого, щоб обійти ліміт у 7 днів
+                    body = {
+                        "count": batch_size, 
+                        "skip": skip_count,
+                        "start": "2026-01-01T00:00:00Z" 
+                    }
                     recent = await fetch_api(session, "/flights/recent", method="POST", body=body)
                     
                     if not recent or "results" not in recent or not recent["results"]:
