@@ -65,6 +65,170 @@ TAXIING_FLIGHTS = set()
 last_sent_message = None
 
 # ---------- ДОПОМІЖНІ ФУНКЦІЇ ----------
+def format_flight_for_db(f):
+    correctAircraftName = None
+    if f.get("aircraft") and f["aircraft"].get("airframe") and f["aircraft"]["airframe"].get("name"):
+        correctAircraftName = f["aircraft"]["airframe"]["name"]
+    elif f.get("aircraft") and f["aircraft"].get("name"):
+        correctAircraftName = f["aircraft"]["name"]
+
+    cleanFlight = {
+        "_id": f.get("_id"),
+        "aircraft": {
+            "name": correctAircraftName,
+            "icao": f.get("aircraft", {}).get("airframe", {}).get("icao") if f.get("aircraft") else None
+        },
+        "type": f.get("type"),
+        "flightNumber": f.get("flightNumber"),
+        "free": (not f.get("charter") and not f.get("schedule")),
+        "schedule": bool(f.get("schedule")),
+        "charter": bool(f.get("charter")),
+        "payload": {
+            "pax": f.get("payload", {}).get("pax"),
+            "cargo": f.get("payload", {}).get("cargo"),
+            "weights": {
+                "cargo": f.get("payload", {}).get("weights", {}).get("cargo")
+            }
+        },
+        "depTime": f.get("depTime"),
+        "duration": f.get("duration"),
+        "arrTime": f.get("arrTime"),
+        "depTimeAct": f.get("depTimeAct"),
+        "delay": f.get("delay"),
+        "takeoffTimeAct": f.get("takeoffTimeAct"),
+        "durationAct": f.get("durationAct"),
+        "arrTimeAct": f.get("arrTimeAct"),
+        "open": f.get("open"),
+        "close": f.get("close"),
+        "rating": f.get("rating"),
+        "simulator": f.get("simulator"),
+        "network": {"name": f["network"]["name"]} if f.get("network") and isinstance(f["network"], dict) else None,
+        "emergency": f.get("emergency"),
+        "result": {
+            "totals": {
+                "distance": f.get("result", {}).get("totals", {}).get("distance"),
+                "fuel": f.get("result", {}).get("totals", {}).get("fuel"),
+                "expenses": f.get("result", {}).get("totals", {}).get("expenses"),
+                "penalties": f.get("result", {}).get("totals", {}).get("penalties"),
+                "revenue": f.get("result", {}).get("totals", {}).get("revenue"),
+                "balance": f.get("result", {}).get("totals", {}).get("balance"),
+                "prices": f.get("result", {}).get("totals", {}).get("prices"),
+                "payload": {
+                    "pax": f.get("result", {}).get("totals", {}).get("payload", {}).get("pax"),
+                    "cargo": f.get("result", {}).get("totals", {}).get("payload", {}).get("cargo"),
+                    "paxByClass": f.get("result", {}).get("totals", {}).get("payload", {}).get("paxByClass")
+                }
+            },
+            "expenses": f.get("result", {}).get("expenses"),
+            "revenue": f.get("result", {}).get("revenue"),
+            "violations": []
+        },
+        "createdAt": f.get("createdAt"),
+        "updatedAt": f.get("updatedAt"),
+        "dep": f.get("dep"),
+        "arr": f.get("arr"),
+        "actArr": f.get("actArr")
+    }
+
+    if f.get("result") and f["result"].get("violations"):
+        for v in f["result"]["violations"]:
+            cleanV = {
+                "title": v.get("title"),
+                "penalty": v.get("penalty")
+            }
+            if v.get("entry") and v["entry"].get("payload"):
+                p = v["entry"]["payload"]
+                cleanV["entry"] = {
+                    "type": v["entry"].get("type", "landing"),
+                    "payload": {
+                        "system": {"fps": p["system"]["fps"]} if p.get("system") and "fps" in p["system"] else None
+                    }
+                }
+                if p.get("touchDown"):
+                    cleanV["entry"]["payload"]["touchDown"] = {
+                        "gForce": p["touchDown"].get("gForce"),
+                        "rate": p["touchDown"].get("rate")
+                    }
+            cleanFlight["result"]["violations"].append(cleanV)
+            
+    return cleanFlight
+    
+async def save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar, week_tag):
+    if not GITHUB_TOKEN:
+        print("⚠️ Немає токену GitHub, рейс не збережено в БД.")
+        return
+        
+    week_filename = f"{week_tag}.json"
+    file_path = f"FLIGHTS/{week_filename}"
+    
+    gh_headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    # Використовуємо наш замок, щоб два літаки, які сіли одночасно, стали в чергу
+    async with GITHUB_DB_LOCK:
+        async with aiohttp.ClientSession() as session:
+            # 1. ШУКАЄМО SHA ФАЙЛУ (обходимо ліміт в 1 МБ)
+            # Запитуємо вміст папки FLIGHTS. Якщо папки немає, GitHub поверне 404
+            file_sha = None
+            dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS"
+            async with session.get(dir_url, headers=gh_headers) as dir_resp:
+                if dir_resp.status == 200:
+                    dir_data = await dir_resp.json()
+                    if isinstance(dir_data, list):
+                        for item in dir_data:
+                            if item.get("name") == week_filename:
+                                file_sha = item.get("sha")
+                                break
+            
+            # 2. КАЧАЄМО ВМІСТ ЧЕРЕЗ RAW (до 100 МБ)
+            github_file_content = []
+            if file_sha:
+                raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{file_path}"
+                async with session.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}) as raw_resp:
+                    if raw_resp.status == 200:
+                        try:
+                            text_content = await raw_resp.text(encoding='utf-8')
+                            github_file_content = json.loads(text_content)
+                        except:
+                            github_file_content = []
+            
+            # 3. СОРТУВАННЯ І ДОДАВАННЯ РЕЙСУ ПО ПІЛОТАХ
+            existing_pilot = next((p for p in github_file_content if p.get("pilot_id") == pilot_id), None)
+            if existing_pilot:
+                # Перевірка, щоб випадково не додати той самий рейс двічі
+                if not any(f.get("_id") == clean_flight["_id"] for f in existing_pilot["flights"]):
+                    existing_pilot["flights"].append(clean_flight)
+            else:
+                # Якщо пілот летить вперше на цьому тижні - створюємо його блок
+                new_pilot_block = {
+                    "pilot_id": pilot_id,
+                    "fullname": pilot_name,
+                    "avatar": pilot_avatar,
+                    "flights": [clean_flight]
+                }
+                github_file_content.append(new_pilot_block)
+            
+            # 4. ВІДПРАВКА НА GITHUB
+            new_content_str = json.dumps(github_file_content, ensure_ascii=False, indent=4)
+            new_content_b64 = base64.b64encode(new_content_str.encode('utf-8')).decode('utf-8')
+            
+            push_payload = {
+                "message": f"🤖 Auto db update: flight {clean_flight.get('flightNumber')}",
+                "content": new_content_b64
+            }
+            if file_sha:
+                push_payload["sha"] = file_sha
+                
+            put_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+            async with session.put(put_url, headers=gh_headers, json=push_payload) as put_resp:
+                if put_resp.status not in [200, 201]:
+                    err_msg = await put_resp.text()
+                    print(f"❌ Помилка запису рейсу на GitHub: {err_msg}")
+                else:
+                    print(f"✅ Рейс успішно збережено у {file_path}")
+    
 def load_charters_state():
     if not CHARTERS_FILE.exists(): return {}
     try: return json.loads(CHARTERS_FILE.read_text(encoding="utf-8"))
@@ -626,6 +790,7 @@ def get_landing_data(f, details_type):
     return "📉 **N/A**"
 
 API_LOCK = None
+GITHUB_DB_LOCK = asyncio.Lock()
 KEY_USAGE_HISTORY = {key: [] for key in NEWSKY_API_KEYS}
 
 async def fetch_api(session, path, method="GET", body=None):
@@ -3020,6 +3185,27 @@ async def main_loop():
                             # 🔥 НОВЕ: Збір статистики після посадки 🔥
                             week_tag = state.get(fid, {}).get("week") or get_iso_week()
                             update_weekly_stats(f, week_tag)
+                            
+                            # ==========================================
+                            # 🚀 МАГІЯ GITHUB (ЗАПИС РЕЙСУ НА САЙТ)
+                            # ==========================================
+                            # Визначаємо тиждень за часом посадки (arrTimeAct), як ти і просив!
+                            arrival_time = f.get("arrTimeAct") or f.get("close")
+                            target_week = get_iso_week(arrival_time)
+                            
+                            clean_flight = format_flight_for_db(f)
+                            
+                            pilot_data = f.get("pilot", {})
+                            pilot_id = pilot_data.get("_id", "unknown")
+                            pilot_name = pilot_data.get("fullname", "Unknown Pilot")
+                            pilot_avatar = pilot_data.get("avatar", "default")
+                            
+                            # Відправляємо на GitHub як окреме фонове завдання, 
+                            # щоб бот не зависав і миттєво відправляв повідомлення в Discord
+                            client.loop.create_task(
+                                save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar, target_week)
+                            )
+                            # ==========================================
                             
                             state.setdefault(fid, {})["completed"] = True
                             print(f"✅ Report Sent: {cs}")
