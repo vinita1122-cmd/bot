@@ -1724,6 +1724,50 @@ async def on_message(message):
         return
     # -------------------------------------------------------------
 
+		# --- 🧪 КОМАНДА: !testgh <ID> (ПРИМУСОВИЙ ЗАПИС РЕЙСУ НА GITHUB) ---
+    if message.content.startswith("!testgh"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split()
+        if len(parts) < 2:
+            return await message.channel.send("⚠️ Usage: `!testgh <Flight_ID>`")
+            
+        fid = parts[1]
+        status_msg = await message.channel.send(f"⏳ **Шукаю рейс `{fid}` та записую на GitHub...**")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                det = await fetch_api(session, f"/flight/{fid}")
+                
+                if not det or "flight" not in det:
+                    return await status_msg.edit(content=f"❌ **Помилка:** Рейс `{fid}` не знайдено в API.")
+                
+                f = det["flight"]
+                cs = f.get("flightNumber") or f.get("callsign") or "Unknown"
+                
+                # 1. Визначаємо тиждень за часом посадки
+                arrival_time = f.get("arrTimeAct") or f.get("close")
+                target_week = get_iso_week(arrival_time)
+                
+                # 2. Форматуємо рейс
+                clean_flight = format_flight_for_db(f)
+                
+                # 3. Дістаємо дані пілота
+                pilot_data = f.get("pilot", {})
+                pilot_id = pilot_data.get("_id", "unknown")
+                pilot_name = pilot_data.get("fullname", "Unknown Pilot")
+                pilot_avatar = pilot_data.get("avatar", "default")
+                
+                # 4. Записуємо на GitHub (тут використовуємо await, щоб дочекатися результату)
+                await save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar, target_week)
+                
+                await status_msg.edit(content=f"✅ **Успіх!** Рейс `{cs}` (ID: `{fid}`) відправлено на GitHub у папку `FLIGHTS/{target_week}.json`!")
+                
+        except Exception as e:
+            await status_msg.edit(content=f"❌ **Внутрішня помилка:** {e}")
+        return
+    # -------------------------------------------------------------
+
 	# --- 🌪️ КОМАНДА: !testwind <ID> (ТЕСТОВЕ ПОВІДОМЛЕННЯ ПРО ПОСАДКУ) ---
     if message.content.startswith("!testwind"):
         if not is_admin: 
