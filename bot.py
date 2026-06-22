@@ -164,7 +164,33 @@ def format_flight_for_db(f):
                         "gForce": p["touchDown"].get("gForce"),
                         "rate": p["touchDown"].get("rate")
                     }
+                
+                # 🔥 НОВЕ: ЗБЕРІГАЄМО ПОГОДУ (ВІТЕР) ПІД ЧАС ПОСАДКИ 🔥
+                if p.get("weather"):
+                    w = p["weather"]
+                    cleanV["entry"]["payload"]["weather"] = {
+                        "windDir": w.get("windDir"),
+                        "windSpd": w.get("windSpd"),
+                        "windX": w.get("windX"),
+                        "windZ": w.get("windZ")
+                    }
+
             cleanFlight["result"]["violations"].append(cleanV)
+            
+    # 🔥 НОВЕ: РЕЗЕРВНЕ ЗБЕРЕЖЕННЯ ПОСАДКИ (якщо не було порушень) 🔥
+    if f.get("landing"):
+        cleanFlight["landing"] = {
+            "rate": f["landing"].get("rate") or f["landing"].get("touchDownRate"),
+            "gForce": f["landing"].get("gForce")
+        }
+        if f["landing"].get("weather"):
+            w = f["landing"]["weather"]
+            cleanFlight["landing"]["weather"] = {
+                "windDir": w.get("windDir"),
+                "windSpd": w.get("windSpd"),
+                "windX": w.get("windX"),
+                "windZ": w.get("windZ") # <-- Додав windZ сюди
+            }
             
     return cleanFlight
     
