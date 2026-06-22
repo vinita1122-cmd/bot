@@ -171,8 +171,7 @@ def format_flight_for_db(f):
                     cleanV["entry"]["payload"]["weather"] = {
                         "windDir": w.get("windDir"),
                         "windSpd": w.get("windSpd"),
-                        "windX": w.get("windX"),
-                        "windZ": w.get("windZ")
+                        "windX": w.get("windX")
                     }
 
             cleanFlight["result"]["violations"].append(cleanV)
@@ -188,8 +187,7 @@ def format_flight_for_db(f):
             cleanFlight["landing"]["weather"] = {
                 "windDir": w.get("windDir"),
                 "windSpd": w.get("windSpd"),
-                "windX": w.get("windX"),
-                "windZ": w.get("windZ") # <-- Додав windZ сюди
+                "windX": w.get("windX")
             }
             
     return cleanFlight
