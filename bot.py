@@ -73,6 +73,7 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 
 AIRPORTS_DB = {}
+HIDDEN_USERS = {}
 BANNED_WOW_MESSAGES = set()
 MONITORING_STARTED = False
 LAST_TRAFFIC_TIME = 0.0
@@ -1521,6 +1522,15 @@ async def on_message(message):
     
     if message.author == client.user: return
 
+	# --- 🥷 ФІЛЬТР: МИТТЄВЕ ВИДАЛЕННЯ ПОВІДОМЛЕНЬ ВІД ПРИХОВАНИХ ЮЗЕРІВ ---
+    if message.channel.id in HIDDEN_USERS and message.author.id in HIDDEN_USERS[message.channel.id]:
+        try:
+            await message.delete()
+        except:
+            pass # Якщо в бота немає прав на видалення — ігноруємо
+        return # Зупиняємо подальшу обробку
+    # ------------------------------------------------------------------------
+
     # --- 🕵️ ПЕРЕХОПЛЕННЯ ПП ---
     if isinstance(message.channel, discord.DMChannel):
         if message.author.id in ADMIN_IDS:
@@ -2430,6 +2440,45 @@ async def on_message(message):
             await message.channel.send("❌ **Message not found.** (Check ID or bot permissions)")
         return
     # -------------------------------------------------------------
+
+	# --- 🔇 КОМАНДА: !hideuser <User_ID> <Channel_ID> (ПРИХОВАТИ ЮЗЕРА) ---
+    if message.content.startswith("!hideuser"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split()
+        if len(parts) < 3:
+            return await message.channel.send("⚠️ **Формат:** `!hideuser <ID_користувача> <ID_каналу>`")
+            
+        target_user = int(parts[1])
+        target_channel = int(parts[2])
+        
+        if target_channel not in HIDDEN_USERS:
+            HIDDEN_USERS[target_channel] = []
+            
+        if target_user not in HIDDEN_USERS[target_channel]:
+            HIDDEN_USERS[target_channel].append(target_user)
+            await message.channel.send(f"🥷 **Готово!** Тепер повідомлення від користувача `{target_user}` у каналі `{target_channel}` будуть миттєво видалятися.")
+        else:
+            await message.channel.send("⚠️ Цей користувач вже прихований у цьому каналі.")
+        return
+
+    # --- 🔊 КОМАНДА: !unhideuser <User_ID> <Channel_ID> (ПОВЕРНУТИ ЮЗЕРА) ---
+    if message.content.startswith("!unhideuser"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split()
+        if len(parts) < 3:
+            return await message.channel.send("⚠️ **Формат:** `!unhideuser <ID_користувача> <ID_каналу>`")
+            
+        target_user = int(parts[1])
+        target_channel = int(parts[2])
+        
+        if target_channel in HIDDEN_USERS and target_user in HIDDEN_USERS[target_channel]:
+            HIDDEN_USERS[target_channel].remove(target_user)
+            await message.channel.send(f"✅ **Знято!** Користувач `{target_user}` знову може писати в канал `{target_channel}`.")
+        else:
+            await message.channel.send("⚠️ Цього користувача не було в списку прихованих для цього каналу.")
+        return
 
     # --- 🛡️ КОМАНДА: !banwow <ID> (ЗАБОРОНИТИ СМАЙЛИ) ---
     if message.content.startswith("!banwow"):
