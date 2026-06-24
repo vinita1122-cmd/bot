@@ -76,7 +76,6 @@ client = discord.Client(intents=intents)
 AIRPORTS_DB = {}
 HIDDEN_USERS = {}
 BANNED_WOW_MESSAGES = set()
-HIDDEN_USERS = load_hidden_users()
 MONITORING_STARTED = False
 LAST_TRAFFIC_TIME = 0.0
 TAXIING_FLIGHTS = set()
@@ -310,6 +309,8 @@ def load_hidden_users():
 def save_hidden_users(data):
     try: HIDDEN_FILE.write_text(json.dumps(data), encoding="utf-8")
     except: pass
+
+HIDDEN_USERS = load_hidden_users()
 
 # 🔥 БЛОК ФУНКЦІЙ ДЛЯ СТАТИСТИКИ 🔥
 def load_weekly_stats():
@@ -2463,14 +2464,15 @@ async def on_message(message):
             return await message.channel.send("⚠️ **Формат:** `!hideuser <ID_користувача> <ID_каналу>`")
             
         target_user = int(parts[1])
-        target_channel = int(parts[2])
+        target_channel = str(parts[2]) # Зберігаємо як текст для JSON
         
         if target_channel not in HIDDEN_USERS:
             HIDDEN_USERS[target_channel] = []
             
         if target_user not in HIDDEN_USERS[target_channel]:
             HIDDEN_USERS[target_channel].append(target_user)
-            await message.channel.send(f"🥷 **Готово!** Тепер повідомлення від користувача `{target_user}` у каналі `{target_channel}` будуть миттєво видалятися.")
+            save_hidden_users(HIDDEN_USERS) # 🔥 ЗБЕРІГАЄМО У ФАЙЛ
+            await message.channel.send(f"🥷 **Готово!** Тепер повідомлення від користувача `{target_user}` у каналі `{target_channel}` будуть назавжди приховані.")
         else:
             await message.channel.send("⚠️ Цей користувач вже прихований у цьому каналі.")
         return
@@ -2484,10 +2486,15 @@ async def on_message(message):
             return await message.channel.send("⚠️ **Формат:** `!unhideuser <ID_користувача> <ID_каналу>`")
             
         target_user = int(parts[1])
-        target_channel = int(parts[2])
+        target_channel = str(parts[2])
         
         if target_channel in HIDDEN_USERS and target_user in HIDDEN_USERS[target_channel]:
             HIDDEN_USERS[target_channel].remove(target_user)
+            # Якщо список порожній, підчищаємо канал з бази
+            if not HIDDEN_USERS[target_channel]:
+                del HIDDEN_USERS[target_channel]
+                
+            save_hidden_users(HIDDEN_USERS) # 🔥 ЗБЕРІГАЄМО У ФАЙЛ
             await message.channel.send(f"✅ **Знято!** Користувач `{target_user}` знову може писати в канал `{target_channel}`.")
         else:
             await message.channel.send("⚠️ Цього користувача не було в списку прихованих для цього каналу.")
