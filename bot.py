@@ -59,6 +59,7 @@ ADMIN_IDS = [
 START_TIME = datetime.now(timezone.utc)
 
 STATE_FILE = Path("/app/data/sent.json")
+HIDDEN_FILE = Path("/app/data/hidden.json")
 STATUS_FILE = Path("/app/data/statuses.json")
 WEEKLY_STATS_FILE = Path("/app/data/weekly_stats.json")
 IGNORED_FILE = Path("/app/data/ignored.json")
@@ -75,6 +76,7 @@ client = discord.Client(intents=intents)
 AIRPORTS_DB = {}
 HIDDEN_USERS = {}
 BANNED_WOW_MESSAGES = set()
+HIDDEN_USERS = load_hidden_users()
 MONITORING_STARTED = False
 LAST_TRAFFIC_TIME = 0.0
 TAXIING_FLIGHTS = set()
@@ -298,6 +300,15 @@ def load_ignored():
 
 def save_ignored(ignored_list):
     try: IGNORED_FILE.write_text(json.dumps(ignored_list), encoding="utf-8")
+    except: pass
+
+def load_hidden_users():
+    if not HIDDEN_FILE.exists(): return {}
+    try: return json.loads(HIDDEN_FILE.read_text(encoding="utf-8"))
+    except: return {}
+
+def save_hidden_users(data):
+    try: HIDDEN_FILE.write_text(json.dumps(data), encoding="utf-8")
     except: pass
 
 # 🔥 БЛОК ФУНКЦІЙ ДЛЯ СТАТИСТИКИ 🔥
@@ -1523,7 +1534,9 @@ async def on_message(message):
     if message.author == client.user: return
 
 	# --- 🥷 ФІЛЬТР: МИТТЄВЕ ВИДАЛЕННЯ ПОВІДОМЛЕНЬ ВІД ПРИХОВАНИХ ЮЗЕРІВ ---
-    if message.channel.id in HIDDEN_USERS and message.author.id in HIDDEN_USERS[message.channel.id]:
+    # Переводимо ID каналу в текст, бо JSON зберігає ключі як текст
+    ch_id_str = str(message.channel.id) 
+    if ch_id_str in HIDDEN_USERS and message.author.id in HIDDEN_USERS[ch_id_str]:
         try:
             await message.delete()
         except:
