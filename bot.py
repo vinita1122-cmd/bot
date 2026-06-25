@@ -2714,6 +2714,55 @@ async def on_message(message):
         return
     # -------------------------------------------------------------
 
+	# --- 🖼️ КОМАНДА: !avatar <User_ID> (СКАЧАТИ АВАТАРКУ КОРИСТУВАЧА) ---
+    if message.content.startswith("!avatar"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split()
+        if len(parts) < 2:
+            return await message.channel.send("⚠️ **Формат:** `!avatar <User_ID>`")
+            
+        target_id_str = parts[1]
+        if not target_id_str.isdigit():
+             return await message.channel.send("⚠️ **Помилка:** ID користувача має бути числом.")
+             
+        target_user_id = int(target_id_str)
+        
+        status_msg = await message.channel.send("⏳ **Шукаю користувача та завантажую аватарку...**")
+        
+        try:
+            # Шукаємо користувача глобально через API Discord
+            target_user = await client.fetch_user(target_user_id)
+            
+            # Беремо аватарку (display_avatar автоматично віддає кастомну або дефолтну)
+            avatar_asset = target_user.display_avatar
+            
+            # Скачуємо картинку в оперативну пам'ять (як байти)
+            avatar_bytes = await avatar_asset.read()
+            
+            # Перетворюємо байти на файл для відправки в Discord
+            image_file = discord.File(io.BytesIO(avatar_bytes), filename=f"avatar_{target_user.name}.png")
+            
+            # Створюємо гарний Embed, щоб прикріпити туди цю фотку
+            embed = discord.Embed(
+                title=f"🖼️ Аватарка: {target_user.display_name}", 
+                description=f"**Нікнейм:** `{target_user.name}`\n**ID:** `{target_user.id}`",
+                color=0x3498db
+            )
+            # Прив'язуємо файл до Embed
+            embed.set_image(url=f"attachment://avatar_{target_user.name}.png")
+            
+            # Відправляємо повідомлення з файлом і видаляємо "годинник"
+            await message.channel.send(embed=embed, file=image_file)
+            await status_msg.delete()
+            
+        except discord.NotFound:
+            await status_msg.edit(content="❌ **Помилка:** Користувача з таким ID не знайдено в Discord.")
+        except Exception as e:
+            await status_msg.edit(content=f"❌ **Помилка під час завантаження:** {e}")
+        return
+    # -------------------------------------------------------------
+
     # --- 📂 КОМАНДА: !files (ВМІСТ ПОСТІЙНОЇ ПАМ'ЯТІ / VOLUME) ---
     if message.content == "!files":
         folder_path = "/app/data"
