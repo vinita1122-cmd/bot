@@ -238,6 +238,15 @@ async def save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar
             # 3. СОРТУВАННЯ І ДОДАВАННЯ РЕЙСУ ПО ПІЛОТАХ
             existing_pilot = next((p for p in github_file_content if p.get("pilot_id") == pilot_id), None)
             if existing_pilot:
+                # 🔥 ТРИГЕР ОНОВЛЕННЯ ПРОФІЛЮ 🔥
+                if existing_pilot.get("avatar") != pilot_avatar or existing_pilot.get("fullname") != pilot_name:
+                    print(f"⚠️ Виявлено зміну профілю для {pilot_name}. Запускаю фонове оновлення бази...")
+                    # Оновлюємо локально для поточного файлу
+                    existing_pilot["fullname"] = pilot_name
+                    existing_pilot["avatar"] = pilot_avatar
+                    # Запускаємо масове оновлення старих файлів ЯК ФОНОВУ ЗАДАЧУ
+                    client.loop.create_task(update_pilot_history_on_github(pilot_id, pilot_name, pilot_avatar))
+
                 # Перевірка, щоб випадково не додати той самий рейс двічі
                 if not any(f.get("_id") == clean_flight["_id"] for f in existing_pilot["flights"]):
                     existing_pilot["flights"].append(clean_flight)
@@ -269,6 +278,85 @@ async def save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar
                     print(f"❌ Помилка запису рейсу на GitHub: {err_msg}")
                 else:
                     print(f"✅ Рейс успішно збережено у {file_path}")
+                    
+async def update_pilot_history_on_github(pilot_id, new_name, new_avatar):
+    if not GITHUB_TOKEN: return
+    
+    gh_headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    print(f"🔄 Починаю масове оновлення профілю для {new_name} на GitHub...")
+    
+    # Використовуємо замок, щоб не заважати запису нових рейсів
+    async with GITHUB_DB_LOCK:
+        async with aiohttp.ClientSession() as session:
+            # 1. Отримуємо список всіх файлів у папці FLIGHTS
+            dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS"
+            async with session.get(dir_url, headers=gh_headers) as dir_resp:
+                if dir_resp.status != 200: 
+                    print("❌ Помилка доступу до папки FLIGHTS")
+                    return
+                dir_data = await dir_resp.json()
+                
+            updated_files_count = 0
+            
+            # 2. Проходимося по кожному файлу
+            for item in dir_data:
+                # Нас цікавлять тільки JSON файли
+                if not item.get("name", "").endswith(".json"): continue
+                
+                file_path = item["path"]
+                file_sha = item["sha"]
+                
+                # Завантажуємо вміст файлу через RAW (обхід ліміту 1 МБ)
+                raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{file_path}"
+                async with session.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}) as raw_resp:
+                    if raw_resp.status != 200: continue
+                    try:
+                        file_content = json.loads(await raw_resp.text(encoding='utf-8'))
+                    except: 
+                        continue
+                        
+                changed = False
+                
+                # 3. Шукаємо нашого пілота в цьому файлі (file_content - це масив)
+                for p in file_content:
+                    if p.get("pilot_id") == pilot_id:
+                        # Якщо ім'я або аватарка відрізняються - оновлюємо!
+                        if p.get("fullname") != new_name or p.get("avatar") != new_avatar:
+                            p["fullname"] = new_name
+                            p["avatar"] = new_avatar
+                            changed = True
+                        break # Пілота знайшли, інших перевіряти в цьому файлі не треба
+                        
+                # 4. Якщо були зміни - пушимо файл назад на GitHub
+                if changed:
+                    new_content_str = json.dumps(file_content, ensure_ascii=False, indent=4)
+                    new_content_b64 = base64.b64encode(new_content_str.encode('utf-8')).decode('utf-8')
+                    
+                    push_payload = {
+                        "message": f"🤖 Auto update profile info for {new_name}",
+                        "content": new_content_b64,
+                        "sha": file_sha
+                    }
+                    put_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+                    
+                    async with session.put(put_url, headers=gh_headers, json=push_payload) as put_resp:
+                        if put_resp.status in [200, 201]:
+                            updated_files_count += 1
+                    
+                    # 🚦 Захист від лімітів GitHub (обов'язкова пауза)
+                    await asyncio.sleep(1.5) 
+
+            # 5. Відправляємо звіт тобі в ПП
+            if updated_files_count > 0:
+                try:
+                    owner = await client.fetch_user(ADMIN_IDS[0])
+                    await owner.send(f"🔄 **Системне оновлення!** Пілот `{new_name}` змінив нік або аватарку.\nУспішно оновлено файлів історії на GitHub: **{updated_files_count}** 🗂️.")
+                except Exception as e:
+                    print(f"Не вдалося відправити звіт адміну: {e}")
     
 def load_charters_state():
     if not CHARTERS_FILE.exists(): return {}
