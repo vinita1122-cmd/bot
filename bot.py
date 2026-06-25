@@ -304,8 +304,10 @@ async def update_pilot_history_on_github(pilot_id, new_name, new_avatar):
             
             # 2. Проходимося по кожному файлу
             for item in dir_data:
-                # Нас цікавлять тільки JSON файли
-                if not item.get("name", "").endswith(".json"): continue
+                file_name = item.get("name", "")
+                
+                if not re.match(r"^\d{4}-W\d{2}\.json$", file_name): 
+                    continue
                 
                 file_path = item["path"]
                 file_sha = item["sha"]
