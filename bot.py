@@ -23,11 +23,6 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID")) if os.getenv("CHANNEL_ID") else 0
 NEWSKY_API_KEY = os.getenv("NEWSKY_API_KEY")
 NEWSKY_API_KEY_ADD = os.getenv("NEWSKY_API_KEY_ADD")
-NEWSKY_API_KEY_3 = os.getenv("NEWSKY_API_KEY_3") # Додатковий ключ 3
-NEWSKY_API_KEY_4 = os.getenv("NEWSKY_API_KEY_4") # Додатковий ключ 4
-NEWSKY_API_KEY_5 = os.getenv("NEWSKY_API_KEY_5") # Додатковий ключ 5
-NEWSKY_API_KEY_6 = os.getenv("NEWSKY_API_KEY_6") # Додатковий ключ 6
-NEWSKY_API_KEY_7 = os.getenv("NEWSKY_API_KEY_7") # Додатковий ключ 7
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 NEWSKY_SID = os.getenv("NEWSKY_SID")
 GITHUB_REPO = "kazuar-avia/kazuar-avia.github.io"
@@ -39,16 +34,6 @@ if NEWSKY_API_KEY:
     NEWSKY_API_KEYS.append(NEWSKY_API_KEY)
 if NEWSKY_API_KEY_ADD: 
     NEWSKY_API_KEYS.append(NEWSKY_API_KEY_ADD)
-if NEWSKY_API_KEY_3: 
-    NEWSKY_API_KEYS.append(NEWSKY_API_KEY_3)
-if NEWSKY_API_KEY_4: 
-    NEWSKY_API_KEYS.append(NEWSKY_API_KEY_4)
-if NEWSKY_API_KEY_5: 
-    NEWSKY_API_KEYS.append(NEWSKY_API_KEY_5)
-if NEWSKY_API_KEY_6: 
-    NEWSKY_API_KEYS.append(NEWSKY_API_KEY_6)
-if NEWSKY_API_KEY_7: 
-    NEWSKY_API_KEYS.append(NEWSKY_API_KEY_7)
 if not NEWSKY_API_KEYS: 
     NEWSKY_API_KEYS.append("")
 
@@ -3947,6 +3932,83 @@ async def check_charters_task():
     except Exception as e:
         print(f"Error checking charters: {e}")
 
+@tasks.loop(minutes=60)
+async def update_airlines_task():
+    if not GITHUB_TOKEN or not NEWSKY_SID:
+        return
+
+    print("🚀 Починаємо оновлення ТОП-30 авіакомпаній...")
+    
+    # 1. Формуємо запит до внутрішнього API Newsky
+    ns_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Cookie": f"sid={NEWSKY_SID}" if not NEWSKY_SID.startswith("sid=") else NEWSKY_SID,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    payload = {
+        "skip": 0, 
+        "count": 30, 
+        "needle": "", 
+        "sort": "stats.recentFlights", 
+        "order": -1
+    }
+    
+    # Використовуємо наш замок, щоб не заважати запису рейсів
+    async with GITHUB_DB_LOCK:
+        async with aiohttp.ClientSession() as session:
+            # --- ОТРИМАННЯ ДАНИХ З NEWSKY ---
+            async with session.post("https://newsky.app/api/airline/search", headers=ns_headers, json=payload) as resp:
+                if resp.status != 200:
+                    print(f"❌ Помилка API авіакомпаній: {resp.status}")
+                    return
+                data = await resp.json()
+            
+            # --- ФІЛЬТРАЦІЯ (М'ЯСОРУБКА) ---
+            clean_airlines = []
+            for airline in data.get("results", []):
+                clean_airlines.append({
+                    "icao": airline.get("icao"),
+                    "fullname": airline.get("fullname"),
+                    "shortname": airline.get("shortname"),
+                    "countryCode": airline.get("countryCode"),
+                    "stats": airline.get("stats", {})
+                })
+            
+            if not clean_airlines:
+                return
+
+            # --- ПЕРЕВІРКА І ПУШ НА GITHUB ---
+            file_path = "FLIGHTS/airlines.json"
+            github_api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+            gh_headers = {
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+
+            file_sha = None
+            # Запитуємо SHA файлу (якщо він вже існує)
+            async with session.get(github_api_url, headers=gh_headers) as sha_resp:
+                if sha_resp.status == 200:
+                    file_sha = (await sha_resp.json()).get("sha")
+            
+            # Кодуємо наші чисті дані в Base64
+            new_content_str = json.dumps(clean_airlines, ensure_ascii=False, indent=4)
+            new_content_b64 = base64.b64encode(new_content_str.encode('utf-8')).decode('utf-8')
+            
+            push_payload = {
+                "message": "🤖 Auto update TOP-30 airlines stats",
+                "content": new_content_b64
+            }
+            if file_sha:
+                push_payload["sha"] = file_sha
+                
+            async with session.put(github_api_url, headers=gh_headers, json=push_payload) as put_resp:
+                if put_resp.status in [200, 201]:
+                    print("✅ ТОП-30 авіакомпаній успішно оновлено на GitHub!")
+                else:
+                    print(f"❌ Помилка запису airlines.json: {await put_resp.text()}")
+
 # ==========================================
 # ANALYTICS PIPELINE: REPORT & CHARTERS
 # ==========================================
@@ -4023,6 +4085,10 @@ async def on_ready():
     
     if not update_github_demand_task.is_running():
         update_github_demand_task.start()
+
+    if not update_airlines_task.is_running():
+        update_airlines_task.start()
+        print("🌍 Airlines stats radar started!")
     
     print(f"✅ Bot online: {client.user}")
     print("🚀 MONITORING STARTED")
