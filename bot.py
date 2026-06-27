@@ -3867,7 +3867,7 @@ async def update_awards_task():
     if not GITHUB_TOKEN or not NEWSKY_SID:
         return
 
-    print("🚀 Починаємо оновлення списку турів авіакомпанії...")
+    print("🚀 Починаємо оновлення списку турів та прогресу пілотів...")
     
     # 1. Заголовки для API
     ns_headers = {
@@ -3877,8 +3877,8 @@ async def update_awards_task():
         "Accept": "application/json"
     }
     
-    # 2. Твій Payload
-    payload = {
+    # 2. Payload для отримання списку турів
+    payload_awards = {
         "activeOnly": False,
         "count": 100,
         "needle": "",
@@ -3888,40 +3888,133 @@ async def update_awards_task():
         "sort": "title"
     }
     
-    # 3. Ендпоінт конкретної авіакомпанії
     airline_id = "695810be3dc76275ba8befa9"
-    url = f"https://newsky.app/api/airline/{airline_id}/awards"
+    url_awards = f"https://newsky.app/api/airline/{airline_id}/awards"
 
     async with GITHUB_DB_LOCK:
         async with aiohttp.ClientSession() as session:
-            # Отримання даних
-            async with session.post(url, headers=ns_headers, json=payload) as resp:
+            # ==========================================
+            # ЧАСТИНА 1: ОНОВЛЕННЯ AWARDS.JSON
+            # ==========================================
+            async with session.post(url_awards, headers=ns_headers, json=payload_awards) as resp:
                 if resp.status != 200:
                     print(f"❌ Помилка API турів: {resp.status}")
                     return
-                data = await resp.json()
+                awards_data = await resp.json()
             
-            # GitHub налаштування
-            file_path = "FLIGHTS/awards.json"
-            github_api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+            # Пуш awards.json на GitHub
+            file_path_awards = "FLIGHTS/awards.json"
+            gh_url_awards = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path_awards}"
             gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
-            # Отримуємо SHA файлу
-            file_sha = None
-            async with session.get(github_api_url, headers=gh_headers) as sha_resp:
+            sha_awards = None
+            async with session.get(gh_url_awards, headers=gh_headers) as sha_resp:
                 if sha_resp.status == 200:
-                    file_sha = (await sha_resp.json()).get("sha")
+                    sha_awards = (await sha_resp.json()).get("sha")
             
-            # Кодуємо та пушимо
-            content_str = json.dumps(data, ensure_ascii=False, indent=4)
-            content_b64 = base64.b64encode(content_str.encode('utf-8')).decode('utf-8')
-            
-            push_payload = {"message": "🤖 Auto update awards list", "content": content_b64}
-            if file_sha: push_payload["sha"] = file_sha
+            content_b64_awards = base64.b64encode(json.dumps(awards_data, ensure_ascii=False, indent=4).encode('utf-8')).decode('utf-8')
+            push_payload_awards = {"message": "🤖 Auto update awards list", "content": content_b64_awards}
+            if sha_awards: push_payload_awards["sha"] = sha_awards
                 
-            async with session.put(github_api_url, headers=gh_headers, json=push_payload) as put_resp:
+            async with session.put(gh_url_awards, headers=gh_headers, json=push_payload_awards) as put_resp:
                 if put_resp.status in [200, 201]:
                     print("✅ Файл awards.json успішно оновлено!")
+
+            # ==========================================
+            # ЧАСТИНА 2: ЗБІР ПРОГРЕСУ ПІЛОТІВ
+            # ==========================================
+            print("🚀 Збираємо статистику пілотів по кожному туру...")
+            
+            pilots_progress = {} # Тут будемо накопичувати дані: { pilot_id: { ... } }
+            
+            # Payload для пілотів (як ти і просив: count 100)
+            payload_pilots = {
+                "count": 100,
+                "needle": "",
+                "order": 1,
+                "skip": 0,
+                "sort": "createdAt"
+            }
+
+            # Проходимося по кожному туру
+            for award in awards_data.get("results", []):
+                award_id = str(award.get("_id"))
+                award_title = award.get("title", "Unknown Award")
+                
+                # Рахуємо загальну кількість легів у цьому турі
+                total_legs = len(award.get("details", {}).get("legs", []))
+                
+                url_pilots = f"https://newsky.app/api/award/{award_id}/pilots"
+                
+                async with session.post(url_pilots, headers=ns_headers, json=payload_pilots) as p_resp:
+                    if p_resp.status != 200:
+                        print(f"⚠️ Не вдалося завантажити пілотів для туру {award_title}")
+                        continue
+                    
+                    pilots_data = await p_resp.json()
+                    
+                    # Проходимося по кожному пілоту, який летить цей тур
+                    for p_info in pilots_data.get("results", []):
+                        p_id = str(p_info.get("_id"))
+                        p_name = p_info.get("fullname", "Unknown Pilot")
+                        p_avatar = p_info.get("avatar", "")
+                        
+                        is_completed = bool(p_info.get("completed"))
+                        comp_date = p_info.get("completed")
+                        prog_pct = p_info.get("progressPct", 0)
+                        
+                        # Рахуємо пройдені леги: беремо масив виконаних рейсів і рахуємо його довжину
+                        completed_legs_count = len(p_info.get("progress", {}).get("legs", []))
+                        legs_str = f"{completed_legs_count}/{total_legs}"
+                        
+                        status_str = "completed" if is_completed else "in_progress"
+                        
+                        # Якщо пілота ще немає в нашому словнику - створюємо його профіль
+                        if p_id not in pilots_progress:
+                            pilots_progress[p_id] = {
+                                "pilot_id": p_id,
+                                "fullname": p_name,
+                                "avatar": p_avatar,
+                                "awards": []
+                            }
+                        
+                        # Додаємо інформацію про цей тур у профіль пілота (я додав ще й Title для зручності на сайті)
+                        pilots_progress[p_id]["awards"].append({
+                            "award_id": award_id,
+                            "award_title": award_title,
+                            "status": status_str,
+                            "completed_date": comp_date,
+                            "progress_pct": prog_pct,
+                            "legs_done": legs_str
+                        })
+                
+                # Мікропауза 100мс, щоб Newsky не лаявся на спам запитами
+                await asyncio.sleep(0.1)
+
+            # Перетворюємо словник у красивий масив (список) для ідеального JSON
+            final_pilots_list = list(pilots_progress.values())
+
+            # ==========================================
+            # ЧАСТИНА 3: ПУШ PILOTS_AWARDS.JSON НА GITHUB
+            # ==========================================
+            file_path_pa = "FLIGHTS/pilots_awards.json"
+            gh_url_pa = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path_pa}"
+            
+            sha_pa = None
+            async with session.get(gh_url_pa, headers=gh_headers) as sha_resp:
+                if sha_resp.status == 200:
+                    sha_pa = (await sha_resp.json()).get("sha")
+                    
+            content_b64_pa = base64.b64encode(json.dumps(final_pilots_list, ensure_ascii=False, indent=4).encode('utf-8')).decode('utf-8')
+            
+            push_payload_pa = {"message": "🤖 Auto update pilots awards progress", "content": content_b64_pa}
+            if sha_pa: push_payload_pa["sha"] = sha_pa
+                
+            async with session.put(gh_url_pa, headers=gh_headers, json=push_payload_pa) as put_resp:
+                if put_resp.status in [200, 201]:
+                    print("✅ Файл pilots_awards.json успішно оновлено!")
+                else:
+                    print(f"❌ Помилка запису pilots_awards.json: {await put_resp.text()}")
                     
 @tasks.loop(minutes=10)
 async def check_charters_task():
