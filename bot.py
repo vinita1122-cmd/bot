@@ -3861,6 +3861,67 @@ async def update_github_demand_task():
                 else:
                     err_msg = await put_resp.text()
                     print(f"❌ Помилка запису на GitHub: {err_msg}")
+
+@tasks.loop(minutes=60)
+async def update_awards_task():
+    if not GITHUB_TOKEN or not NEWSKY_SID:
+        return
+
+    print("🚀 Починаємо оновлення списку турів авіакомпанії...")
+    
+    # 1. Заголовки для API
+    ns_headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Cookie": f"sid={NEWSKY_SID}" if not NEWSKY_SID.startswith("sid=") else NEWSKY_SID,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    # 2. Твій Payload
+    payload = {
+        "activeOnly": False,
+        "count": 100,
+        "needle": "",
+        "order": 1,
+        "showClosed": True,
+        "skip": 0,
+        "sort": "title"
+    }
+    
+    # 3. Ендпоінт конкретної авіакомпанії
+    airline_id = "695810be3dc76275ba8befa9"
+    url = f"https://newsky.app/api/airline/{airline_id}/awards"
+
+    async with GITHUB_DB_LOCK:
+        async with aiohttp.ClientSession() as session:
+            # Отримання даних
+            async with session.post(url, headers=ns_headers, json=payload) as resp:
+                if resp.status != 200:
+                    print(f"❌ Помилка API турів: {resp.status}")
+                    return
+                data = await resp.json()
+            
+            # GitHub налаштування
+            file_path = "FLIGHTS/awards.json"
+            github_api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+            gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+
+            # Отримуємо SHA файлу
+            file_sha = None
+            async with session.get(github_api_url, headers=gh_headers) as sha_resp:
+                if sha_resp.status == 200:
+                    file_sha = (await sha_resp.json()).get("sha")
+            
+            # Кодуємо та пушимо
+            content_str = json.dumps(data, ensure_ascii=False, indent=4)
+            content_b64 = base64.b64encode(content_str.encode('utf-8')).decode('utf-8')
+            
+            push_payload = {"message": "🤖 Auto update awards list", "content": content_b64}
+            if file_sha: push_payload["sha"] = file_sha
+                
+            async with session.put(github_api_url, headers=gh_headers, json=push_payload) as put_resp:
+                if put_resp.status in [200, 201]:
+                    print("✅ Файл awards.json успішно оновлено!")
                     
 @tasks.loop(minutes=10)
 async def check_charters_task():
@@ -4085,6 +4146,10 @@ async def on_ready():
     
     if not update_github_demand_task.is_running():
         update_github_demand_task.start()
+
+	if not update_awards_task.is_running():
+        update_awards_task.start()
+        print("🏅 Awards radar started!")
 
     if not update_airlines_task.is_running():
         update_airlines_task.start()
