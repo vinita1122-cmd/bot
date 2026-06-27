@@ -4147,6 +4147,7 @@ async def on_ready():
     if not update_github_demand_task.is_running():
         update_github_demand_task.start()
 
+	
 		if not update_awards_task.is_running():
         update_awards_task.start()
         print("🏅 Awards radar started!")
