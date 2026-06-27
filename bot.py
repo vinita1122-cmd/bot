@@ -4147,8 +4147,7 @@ async def on_ready():
     if not update_github_demand_task.is_running():
         update_github_demand_task.start()
 
-	
-		if not update_awards_task.is_running():
+    if not update_awards_task.is_running():
         update_awards_task.start()
         print("🏅 Awards radar started!")
 
@@ -4163,3 +4162,4 @@ async def on_ready():
     client.loop.create_task(start_web_server())
 
 client.run(DISCORD_TOKEN)
+
