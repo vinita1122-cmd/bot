@@ -3957,7 +3957,6 @@ async def update_awards_task():
                     for p_info in pilots_data.get("results", []):
                         p_id = str(p_info.get("_id"))
                         p_name = p_info.get("fullname", "Unknown Pilot")
-                        p_avatar = p_info.get("avatar", "")
                         
                         is_completed = bool(p_info.get("completed"))
                         comp_date = p_info.get("completed")
@@ -3974,7 +3973,6 @@ async def update_awards_task():
                             pilots_progress[p_id] = {
                                 "pilot_id": p_id,
                                 "fullname": p_name,
-                                "avatar": p_avatar,
                                 "awards": []
                             }
                         
