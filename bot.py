@@ -187,18 +187,18 @@ async def save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar
     week_filename = f"{week_tag}.json"
     file_path = f"FLIGHTS/{week_filename}"
     
+    # 🔥 Додано антикеш заголовок
     gh_headers = {
         "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
+        "Accept": "application/vnd.github.v3+json",
+        "Cache-Control": "no-cache"
     }
     
-    # Використовуємо наш замок, щоб два літаки, які сіли одночасно, стали в чергу
     async with GITHUB_DB_LOCK:
         async with aiohttp.ClientSession() as session:
-            # 1. ШУКАЄМО SHA ФАЙЛУ (обходимо ліміт в 1 МБ)
-            # Запитуємо вміст папки FLIGHTS. Якщо папки немає, GitHub поверне 404
+            # 1. ШУКАЄМО SHA ФАЙЛУ (додано ?t=... для обходу кешу GitHub)
             file_sha = None
-            dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS"
+            dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS?t={int(time.time())}"
             async with session.get(dir_url, headers=gh_headers) as dir_resp:
                 if dir_resp.status == 200:
                     dir_data = await dir_resp.json()
@@ -208,29 +208,32 @@ async def save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar
                                 file_sha = item.get("sha")
                                 break
             
-            # 2. КАЧАЄМО ВМІСТ ЧЕРЕЗ RAW (до 100 МБ)
+            # 2. КАЧАЄМО ВМІСТ НАПРЯМУ З BLOB API (Миттєво, без кешу!)
             github_file_content = []
             if file_sha:
-                raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{file_path}"
-                async with session.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}) as raw_resp:
-                    if raw_resp.status == 200:
+                blob_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/blobs/{file_sha}"
+                async with session.get(blob_url, headers=gh_headers) as blob_resp:
+                    if blob_resp.status == 200:
                         try:
-                            text_content = await raw_resp.text(encoding='utf-8')
+                            blob_data = await blob_resp.json()
+                            text_content = base64.b64decode(blob_data['content']).decode('utf-8')
                             github_file_content = json.loads(text_content)
-                        except:
+                        except Exception as e:
+                            print(f"Помилка читання Blob: {e}")
                             github_file_content = []
             
             # 3. СОРТУВАННЯ І ДОДАВАННЯ РЕЙСУ ПО ПІЛОТАХ
             existing_pilot = next((p for p in github_file_content if p.get("pilot_id") == pilot_id), None)
+            
+            profile_changed = False # 🔥 Флаг для запуску масового оновлення
+            
             if existing_pilot:
-                # 🔥 ТРИГЕР ОНОВЛЕННЯ ПРОФІЛЮ 🔥
+                # Перевіряємо, чи змінилася аватарка або ім'я порівняно з базою
                 if existing_pilot.get("avatar") != pilot_avatar or existing_pilot.get("fullname") != pilot_name:
                     print(f"⚠️ Виявлено зміну профілю для {pilot_name}. Запускаю фонове оновлення бази...")
-                    # Оновлюємо локально для поточного файлу
                     existing_pilot["fullname"] = pilot_name
                     existing_pilot["avatar"] = pilot_avatar
-                    # Запускаємо масове оновлення старих файлів ЯК ФОНОВУ ЗАДАЧУ
-                    client.loop.create_task(update_pilot_history_on_github(pilot_id, pilot_name, pilot_avatar))
+                    profile_changed = True # Вмикаємо тригер!
 
                 # Перевірка, щоб випадково не додати той самий рейс двічі
                 if not any(f.get("_id") == clean_flight["_id"] for f in existing_pilot["flights"]):
@@ -263,13 +266,17 @@ async def save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar
                     print(f"❌ Помилка запису рейсу на GitHub: {err_msg}")
                 else:
                     print(f"✅ Рейс успішно збережено у {file_path}")
-                    
+                    if profile_changed:
+                        client.loop.create_task(update_pilot_history_on_github(pilot_id, pilot_name, pilot_avatar))
+
+
 async def update_pilot_history_on_github(pilot_id, new_name, new_avatar):
     if not GITHUB_TOKEN: return
     
     gh_headers = {
         "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
+        "Accept": "application/vnd.github.v3+json",
+        "Cache-Control": "no-cache"
     }
     
     print(f"🔄 Починаю масове оновлення профілю для {new_name} на GitHub...")
@@ -278,7 +285,7 @@ async def update_pilot_history_on_github(pilot_id, new_name, new_avatar):
     async with GITHUB_DB_LOCK:
         async with aiohttp.ClientSession() as session:
             # 1. Отримуємо список всіх файлів у папці FLIGHTS
-            dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS"
+            dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS?t={int(time.time())}"
             async with session.get(dir_url, headers=gh_headers) as dir_resp:
                 if dir_resp.status != 200: 
                     print("❌ Помилка доступу до папки FLIGHTS")
@@ -297,26 +304,28 @@ async def update_pilot_history_on_github(pilot_id, new_name, new_avatar):
                 file_path = item["path"]
                 file_sha = item["sha"]
                 
-                # Завантажуємо вміст файлу через RAW (обхід ліміту 1 МБ)
-                raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{file_path}"
-                async with session.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}) as raw_resp:
-                    if raw_resp.status != 200: continue
+                # Завантажуємо вміст файлу через Blob API (обхід кешу!)
+                blob_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/blobs/{file_sha}"
+                async with session.get(blob_url, headers=gh_headers) as blob_resp:
+                    if blob_resp.status != 200: continue
                     try:
-                        file_content = json.loads(await raw_resp.text(encoding='utf-8'))
-                    except: 
+                        blob_data = await blob_resp.json()
+                        text_content = base64.b64decode(blob_data['content']).decode('utf-8')
+                        file_content = json.loads(text_content)
+                    except Exception as e: 
+                        print(f"Помилка читання Blob у фоні: {e}")
                         continue
                         
                 changed = False
                 
-                # 3. Шукаємо нашого пілота в цьому файлі (file_content - це масив)
+                # 3. Шукаємо нашого пілота в цьому файлі
                 for p in file_content:
                     if p.get("pilot_id") == pilot_id:
-                        # Якщо ім'я або аватарка відрізняються - оновлюємо!
                         if p.get("fullname") != new_name or p.get("avatar") != new_avatar:
                             p["fullname"] = new_name
                             p["avatar"] = new_avatar
                             changed = True
-                        break # Пілота знайшли, інших перевіряти в цьому файлі не треба
+                        break 
                         
                 # 4. Якщо були зміни - пушимо файл назад на GitHub
                 if changed:
@@ -333,9 +342,9 @@ async def update_pilot_history_on_github(pilot_id, new_name, new_avatar):
                     async with session.put(put_url, headers=gh_headers, json=push_payload) as put_resp:
                         if put_resp.status in [200, 201]:
                             updated_files_count += 1
-                    
-                    # 🚦 Захист від лімітів GitHub (обов'язкова пауза)
-                    await asyncio.sleep(1.5) 
+                
+                # Захист від лімітів
+                await asyncio.sleep(1.5) 
 
             # 5. Відправляємо звіт тобі в ПП
             if updated_files_count > 0:
