@@ -1693,7 +1693,7 @@ async def on_message(message):
 
 #  -------------------------------------------------------------
 
-	# --- 🌍 КОМАНДА: !syncall (ЧАНКОВИЙ ЕКСПОРТ ІСТОРІЇ НА GITHUB) ---
+# --- 🌍 КОМАНДА: !syncall (ЧАНКОВИЙ ЕКСПОРТ ІСТОРІЇ НА GITHUB) ---
     if message.content.startswith("!syncall"):
         if not is_admin: return await message.channel.send("🚫 **Access Denied**")
         
@@ -1781,9 +1781,11 @@ async def on_message(message):
                     if weekly_batches:
                         await status_msg.edit(content=f"⏳ **Пачка {skip_count // batch_size + 1}:** Записую на GitHub (Тижнів у пачці: {len(weekly_batches)})...")
                         
+                        # 🔥 ДОДАНО Cache-Control для обходу кешу GitHub 🔥
                         gh_headers = {
                             "Authorization": f"token {GITHUB_TOKEN}",
-                            "Accept": "application/vnd.github.v3+json"
+                            "Accept": "application/vnd.github.v3+json",
+                            "Cache-Control": "no-cache"
                         }
                         
                         for week_tag, pilots_dict in weekly_batches.items():
@@ -1795,7 +1797,8 @@ async def on_message(message):
                                 file_sha = None
                                 github_file_content = []
                                 
-                                dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS"
+                                # 🔥 ДОДАНО ?t=... для обходу кешу списку файлів 🔥
+                                dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS?t={int(time.time())}"
                                 async with session.get(dir_url, headers=gh_headers) as dir_resp:
                                     if dir_resp.status == 200:
                                         dir_data = await dir_resp.json()
@@ -1805,12 +1808,15 @@ async def on_message(message):
                                                     file_sha = item.get("sha")
                                                     break
                                 
+                                # 🔥 НОВА ТЕХНОЛОГІЯ: Читання напряму через Blob API 🔥
                                 if file_sha:
-                                    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{file_path}"
-                                    async with session.get(raw_url, headers={"Authorization": f"token {GITHUB_TOKEN}"}) as raw_resp:
-                                        if raw_resp.status == 200:
+                                    blob_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/blobs/{file_sha}"
+                                    async with session.get(blob_url, headers=gh_headers) as blob_resp:
+                                        if blob_resp.status == 200:
                                             try:
-                                                github_file_content = json.loads(await raw_resp.text(encoding='utf-8'))
+                                                blob_data = await blob_resp.json()
+                                                text_content = base64.b64decode(blob_data['content']).decode('utf-8')
+                                                github_file_content = json.loads(text_content)
                                             except: pass
                                                 
                                 for pid, p_data in pilots_dict.items():
@@ -1822,7 +1828,8 @@ async def on_message(message):
                                     else:
                                         github_file_content.append(p_data)
                                         
-                                new_content_b64 = base64.b64encode(json.dumps(github_file_content, ensure_ascii=False, indent=4).encode('utf-8')).decode('utf-8')
+                                new_content_str = json.dumps(github_file_content, ensure_ascii=False, indent=4)
+                                new_content_b64 = base64.b64encode(new_content_str.encode('utf-8')).decode('utf-8')
                                 
                                 push_payload = {
                                     "message": f"🤖 Mass sync: updating {week_tag} (batch {skip_count // batch_size + 1})", 
