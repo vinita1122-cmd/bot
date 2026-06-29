@@ -2324,6 +2324,104 @@ async def on_message(message):
         return
     # -------------------------------------------------------------
 
+	# --- 🗑️ КОМАНДА: !delghflight <ID> (ВИДАЛИТИ РЕЙС З GITHUB) ---
+    if message.content.startswith("!delghflight"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split()
+        if len(parts) < 2:
+            return await message.channel.send("⚠️ Usage: `!delghflight <Flight_ID>`")
+            
+        target_id = parts[1]
+        status_msg = await message.channel.send(f"⏳ **Шукаю рейс `{target_id}` у базі GitHub...**")
+        
+        if not GITHUB_TOKEN:
+            return await status_msg.edit(content="❌ **Помилка:** Немає токену GITHUB_TOKEN.")
+
+        gh_headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json",
+            "Cache-Control": "no-cache"
+        }
+
+        deleted = False
+        target_file = ""
+
+        try:
+            async with GITHUB_DB_LOCK:
+                async with aiohttp.ClientSession() as session:
+                    # 1. Отримуємо актуальний список файлів (з антикешем)
+                    dir_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/FLIGHTS?t={int(time.time())}"
+                    async with session.get(dir_url, headers=gh_headers) as dir_resp:
+                        if dir_resp.status != 200:
+                            return await status_msg.edit(content="❌ **Помилка:** Не вдалося отримати список файлів з GitHub.")
+                        dir_data = await dir_resp.json()
+
+                    # 2. Перебираємо всі файли у папці
+                    for item in dir_data:
+                        file_name = item.get("name", "")
+                        if not file_name.endswith(".json"): continue
+                        
+                        file_path = item["path"]
+                        file_sha = item["sha"]
+                        
+                        # 3. Читаємо файл через Blob API (найсвіжіші дані)
+                        blob_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/blobs/{file_sha}"
+                        async with session.get(blob_url, headers=gh_headers) as blob_resp:
+                            if blob_resp.status != 200: continue
+                            try:
+                                blob_data = await blob_resp.json()
+                                text_content = base64.b64decode(blob_data['content']).decode('utf-8')
+                                file_content = json.loads(text_content)
+                            except:
+                                continue
+                        
+                        changed = False
+                        
+                        # 4. Шукаємо рейс усередині файлу
+                        for p in file_content:
+                            original_len = len(p["flights"])
+                            # Фільтруємо рейси, залишаючи всі, крім того, що треба видалити
+                            p["flights"] = [f for f in p["flights"] if str(f.get("_id")) != target_id and str(f.get("id")) != target_id]
+                            
+                            # Якщо довжина масиву змінилася, значить рейс був тут!
+                            if len(p["flights"]) < original_len:
+                                changed = True
+                        
+                        # 5. Якщо рейс знайшли і видалили — записуємо файл назад
+                        if changed:
+                            # Підчищаємо пілотів, у яких 0 рейсів після видалення
+                            file_content = [p for p in file_content if len(p["flights"]) > 0]
+                            
+                            new_content_str = json.dumps(file_content, ensure_ascii=False, indent=4)
+                            new_content_b64 = base64.b64encode(new_content_str.encode('utf-8')).decode('utf-8')
+                            
+                            push_payload = {
+                                "message": f"🤖 Auto delete flight {target_id}",
+                                "content": new_content_b64,
+                                "sha": file_sha
+                            }
+                            
+                            put_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
+                            async with session.put(put_url, headers=gh_headers, json=push_payload) as put_resp:
+                                if put_resp.status in [200, 201]:
+                                    deleted = True
+                                    target_file = file_name
+                            
+                            # Оскільки рейс унікальний, якщо ми його знайшли і видалили — далі шукати немає сенсу
+                            break 
+                            
+        except Exception as e:
+            return await status_msg.edit(content=f"❌ **Помилка під час видалення:** {e}")
+
+        # 6. Виводимо результат
+        if deleted:
+            await status_msg.edit(content=f"✅ **Успіх!** Рейс `{target_id}` назавжди видалено з файлу `{target_file}` на GitHub.")
+        else:
+            await status_msg.edit(content=f"⚠️ **Рейс не знайдено.** Рейсу `{target_id}` немає в жодному JSON-файлі на GitHub.")
+        return
+    # -------------------------------------------------------------
+
 	# --- ➖ КОМАНДА: !delflight <ID> (ВІДНЯТИ РЕЙС ЗІ СТАТИСТИКИ) ---
     if message.content.startswith("!delflight"):
         if not is_admin: return await message.channel.send("🚫 **Access Denied**")
