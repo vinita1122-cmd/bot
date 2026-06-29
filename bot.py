@@ -2322,9 +2322,32 @@ async def on_message(message):
                 # 1. Пропускаємо через м'ясорубку
                 clean_flight = format_flight_for_db(f)
                 
-                # 2. Якщо вказано emer — переписуємо статус!
+                # 2. Якщо вказано emer — імітуємо СПРАВЖНІЙ emergency!
                 if force_emer:
                     clean_flight["emergency"] = True
+                    
+                    if "result" in clean_flight:
+                        # Анулюємо фінансові показники
+                        if "totals" in clean_flight["result"]:
+                            clean_flight["result"]["totals"]["expenses"] = 0
+                            clean_flight["result"]["totals"]["penalties"] = 0
+                            clean_flight["result"]["totals"]["revenue"] = 0
+                            clean_flight["result"]["totals"]["balance"] = 0
+                            
+                        # Додаємо запис про Emergency Declared, нічого не замінюючи
+                        if "violations" in clean_flight["result"]:
+                            clean_flight["result"]["violations"].append({
+                                "title": "Emergency Declared",
+                                "penalty": {
+                                    "points": 0,
+                                    "cash": 0
+                                },
+                                "entry": {
+                                    "type": "emergency",
+                                    "payload": {}
+                                },
+                                "wiki": "https://wiki.newsky.app/en/flight/rating-system#emergency"
+                            })
                 
                 # 3. Визначаємо тиждень за часом посадки
                 arrival_time = f.get("arrTimeAct") or f.get("close")
@@ -2343,14 +2366,14 @@ async def on_message(message):
                 
                 # 6. Звіт про успіх
                 if force_emer:
-                    await msg.edit(content=f"🚨 **Успіх!** Рейс `{cs}` (ID: `{fid}`) записано на GitHub у тиждень `{target_week}` **із примусовим статусом EMERGENCY!**")
+                    await msg.edit(content=f"🚨 **Успіх!** Рейс `{cs}` (ID: `{fid}`) записано на GitHub у тиждень `{target_week}` **із повною імітацією EMERGENCY (штрафи анульовано, лог додано)!**")
                 else:
                     await msg.edit(content=f"✅ **Успіх!** Рейс `{cs}` (ID: `{fid}`) успішно додано на GitHub у тиждень `{target_week}`.")
                 
         except Exception as e:
             await msg.edit(content=f"❌ **Внутрішня помилка:** {e}")
         return
-    # -------------------------------------------------------------
+# -------------------------------------------------------------
 
     # --- ➕ КОМАНДА: !addflight <ID> (ДОДАТИ ПРОПУЩЕНИЙ РЕЙС) ---
     if message.content.startswith("!addflight"):
