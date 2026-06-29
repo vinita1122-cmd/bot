@@ -2291,6 +2291,67 @@ async def on_message(message):
         return
     # -------------------------------------------------------------
 
+	# --- ➕ КОМАНДА: !addghflight <ID> [emer] (ЗАПИСАТИ РЕЙС НА GITHUB ВРУЧНУ) ---
+    if message.content.startswith("!addghflight"):
+        if not is_admin: return await message.channel.send("🚫 **Access Denied**")
+        
+        parts = message.content.split()
+        if len(parts) < 2:
+            return await message.channel.send("⚠️ **Формат:** `!addghflight <Flight_ID> [emer]`")
+            
+        fid = parts[1]
+        # Перевіряємо, чи є третє слово і чи це "emer"
+        force_emer = len(parts) > 2 and parts[2].lower() == "emer"
+        
+        status_text = f"⏳ **Шукаю рейс `{fid}` в API Newsky...**"
+        if force_emer:
+            status_text += "\n*(Увімкнено режим примусового EMERGENCY 🚨)*"
+            
+        msg = await message.channel.send(status_text)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                det = await fetch_api(session, f"/flight/{fid}")
+                
+                if not det or "flight" not in det:
+                    return await msg.edit(content=f"❌ **Помилка:** Рейс `{fid}` не знайдено в API.")
+                
+                f = det["flight"]
+                cs = f.get("flightNumber") or f.get("callsign") or "Unknown"
+                
+                # 1. Пропускаємо через м'ясорубку
+                clean_flight = format_flight_for_db(f)
+                
+                # 2. Якщо вказано emer — переписуємо статус!
+                if force_emer:
+                    clean_flight["emergency"] = True
+                
+                # 3. Визначаємо тиждень за часом посадки
+                arrival_time = f.get("arrTimeAct") or f.get("close")
+                target_week = get_iso_week(arrival_time)
+                
+                # 4. Витягуємо дані пілота
+                pilot_data = f.get("pilot", {})
+                pilot_id = pilot_data.get("_id", "unknown")
+                pilot_name = pilot_data.get("fullname", "Unknown Pilot")
+                pilot_avatar = pilot_data.get("avatar", "default")
+                
+                await msg.edit(content=f"⏳ Дані отримано. Записую рейс `{cs}` у файл `{target_week}.json` на GitHub...")
+                
+                # 5. Відправляємо на GitHub
+                await save_flight_to_github(clean_flight, pilot_id, pilot_name, pilot_avatar, target_week)
+                
+                # 6. Звіт про успіх
+                if force_emer:
+                    await msg.edit(content=f"🚨 **Успіх!** Рейс `{cs}` (ID: `{fid}`) записано на GitHub у тиждень `{target_week}` **із примусовим статусом EMERGENCY!**")
+                else:
+                    await msg.edit(content=f"✅ **Успіх!** Рейс `{cs}` (ID: `{fid}`) успішно додано на GitHub у тиждень `{target_week}`.")
+                
+        except Exception as e:
+            await msg.edit(content=f"❌ **Внутрішня помилка:** {e}")
+        return
+    # -------------------------------------------------------------
+
     # --- ➕ КОМАНДА: !addflight <ID> (ДОДАТИ ПРОПУЩЕНИЙ РЕЙС) ---
     if message.content.startswith("!addflight"):
         if not is_admin: return await message.channel.send("🚫 **Access Denied**")
